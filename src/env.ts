@@ -19,7 +19,10 @@ const envSchema = z
       .optional(),
     TWILIO_MESSAGING_SERVICE_SID: z
       .string()
-      .startsWith("MG", "Messaging Service SID must start with MG")
+      .refine(
+        (val) => val.startsWith("MG") || val.startsWith("US"),
+        "Messaging Service SID must start with MG or US"
+      )
       .optional(),
   })
   .refine(
