@@ -12,11 +12,24 @@ export async function sendWhatsAppMessage(
 ): Promise<SendMessageResult> {
   try {
     const client = createTwilioClient();
-    const message = await client.messages.create({
-      from: env.TWILIO_PHONE_NUMBER,
+
+    const messageParams: {
+      to: string;
+      body: string;
+      from?: string;
+      messagingServiceSid?: string;
+    } = {
       to,
       body,
-    });
+    };
+
+    if (env.TWILIO_MESSAGING_SERVICE_SID) {
+      messageParams.messagingServiceSid = env.TWILIO_MESSAGING_SERVICE_SID;
+    } else if (env.TWILIO_PHONE_NUMBER) {
+      messageParams.from = env.TWILIO_PHONE_NUMBER;
+    }
+
+    const message = await client.messages.create(messageParams);
 
     return {
       success: true,
