@@ -1,20 +1,26 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { whatsappMessageSchema } from "../types/index.js";
-import { sendWhatsAppMessage } from "../services/twilio.js";
-import { generateSimpleResponse } from "../services/openai.js";
+import type { SendMessageResult } from "../types/index.js";
 
 export interface MessagesHandlerDependencies {
-  generateSimpleResponse: typeof generateSimpleResponse;
-  sendWhatsAppMessage: typeof sendWhatsAppMessage;
+  generateSimpleResponse: (
+    conversationId: string,
+    message: string
+  ) => Promise<string>;
+  sendWhatsAppMessage: (to: string, body: string) => Promise<SendMessageResult>;
 }
 
 export function createMessagesHandlers(
-  dependencies: Partial<MessagesHandlerDependencies> = {}
+  dependencies: MessagesHandlerDependencies
 ) {
   const {
-    generateSimpleResponse: generateResponse = generateSimpleResponse,
-    sendWhatsAppMessage: dispatchMessage = sendWhatsAppMessage,
+    generateSimpleResponse: generateResponse,
+    sendWhatsAppMessage: dispatchMessage,
   } = dependencies;
+
+  if (!generateResponse || !dispatchMessage) {
+    throw new Error("Messages handler dependencies are not configured");
+  }
 
   return {
     async handleWhatsAppWebhook(request: FastifyRequest, reply: FastifyReply) {
@@ -30,7 +36,7 @@ export function createMessagesHandlers(
       const { From, Body } = parsed.data;
 
       request.log.info(`Received WhatsApp message from ${From}: ${Body}`);
-      const openaiResponse = await generateResponse(Body);
+      const openaiResponse = await generateResponse(From, Body);
       const result = await dispatchMessage(From, openaiResponse);
 
       if (!result.success) {
@@ -52,8 +58,3 @@ export function createMessagesHandlers(
     },
   };
 }
-
-const defaultHandlers = createMessagesHandlers();
-
-export const handleWhatsAppWebhook = defaultHandlers.handleWhatsAppWebhook;
-export const handleHealthCheck = defaultHandlers.handleHealthCheck;

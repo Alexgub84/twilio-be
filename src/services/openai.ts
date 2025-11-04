@@ -1,69 +1,167 @@
 import OpenAI from "openai";
-import { env } from "../env.js";
-import { encoding_for_model, type TiktokenModel } from "tiktoken";
+import {
+  encoding_for_model,
+  type Tiktoken,
+  type TiktokenModel,
+} from "tiktoken";
+import { logger } from "../logger.js";
 
-const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY,
-});
+type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
-const encoder = encoding_for_model(env.OPENAI_MODEL as TiktokenModel);
-
-const MAX_TOKENS = 700;
-
-const context: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-  {
-    role: "system",
-    content: "You are a helpful chatbot",
-  },
-];
-
-export async function generateSimpleResponse(message: string) {
-  context.push({ role: "user", content: message });
-  const response = await openai.chat.completions.create({
-    model: env.OPENAI_MODEL,
-    messages: context,
-  });
-  const responseMessage = response.choices?.[0]?.message;
-  if (!responseMessage) {
-    throw new Error("No content returned from OpenAI response");
-  }
-  context.push(responseMessage);
-
-  if (response.usage && response.usage.total_tokens > MAX_TOKENS) {
-    deleteOlderMessages();
-  }
-  if (!responseMessage.content) {
-    throw new Error("No content returned from OpenAI response");
-  }
-  return responseMessage.content;
+export interface OpenAIServiceOptions {
+  client: OpenAI;
+  model: string;
+  tokenLimit: number;
+  systemPrompt: string;
+  tokenizer?: Pick<Tiktoken, "encode">;
 }
 
-function deleteOlderMessages() {
-  let contextLength = getContextLength();
-  while (contextLength > MAX_TOKENS) {
-    for (let i = 0; i < context.length; i++) {
-      const message = context[i];
-      if (message && message.role != "system") {
-        context.splice(i, 1);
-        contextLength = getContextLength();
-        break;
-      }
+export interface OpenAIService {
+  generateReply: (conversationId: string, message: string) => Promise<string>;
+  resetConversation: (conversationId: string) => void;
+}
+
+export function createOpenAIService(
+  options: OpenAIServiceOptions
+): OpenAIService {
+  const { client, model, tokenLimit, systemPrompt } = options;
+  const tokenizer =
+    options.tokenizer ?? encoding_for_model(model as TiktokenModel);
+  const serviceLogger = logger.child({ module: "openai-service", model });
+
+  const conversations = new Map<string, ChatMessage[]>();
+
+  const logInfo = (message: string, meta?: Record<string, unknown>) => {
+    serviceLogger.info(meta ?? {}, message);
+  };
+
+  const logWarn = (message: string, meta?: Record<string, unknown>) => {
+    serviceLogger.warn(meta ?? {}, message);
+  };
+
+  const logError = (message: string, meta?: Record<string, unknown>) => {
+    serviceLogger.error(meta ?? {}, message);
+  };
+
+  const ensureConversation = (conversationId: string): ChatMessage[] => {
+    const existing = conversations.get(conversationId);
+    if (existing) {
+      return existing;
     }
-  }
-}
 
-function getContextLength() {
-  let length = 0;
-  context.forEach((message) => {
-    if (typeof message.content == "string") {
-      length += encoder.encode(message.content).length;
-    } else if (Array.isArray(message.content)) {
-      message.content.forEach((messageContent) => {
-        if (messageContent.type == "text") {
-          length += encoder.encode(messageContent.text).length;
-        }
+    const context: ChatMessage[] = [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+    ];
+    conversations.set(conversationId, context);
+    return context;
+  };
+
+  const countTokens = (messages: ChatMessage[]): number =>
+    messages.reduce((total, message) => {
+      if (typeof message.content === "string") {
+        return total + tokenizer.encode(message.content).length;
+      }
+
+      if (Array.isArray(message.content)) {
+        return (
+          total +
+          message.content.reduce((innerTotal, part) => {
+            if (part.type === "text") {
+              return innerTotal + tokenizer.encode(part.text).length;
+            }
+            return innerTotal;
+          }, 0)
+        );
+      }
+
+      return total;
+    }, 0);
+
+  const trimContext = (messages: ChatMessage[]): boolean => {
+    let trimmed = false;
+    let totalTokens = countTokens(messages);
+
+    while (totalTokens > tokenLimit && messages.length > 1) {
+      trimmed = true;
+      messages.splice(1, 1);
+      totalTokens = countTokens(messages);
+    }
+
+    if (trimmed) {
+      logWarn("openai.context.trimmed", {
+        tokenLimit,
+        totalTokens,
+        conversationLength: messages.length,
       });
     }
-  });
-  return length;
+
+    return trimmed;
+  };
+
+  const generateReply = async (
+    conversationId: string,
+    message: string
+  ): Promise<string> => {
+    const messages = ensureConversation(conversationId);
+    messages.push({ role: "user", content: message });
+
+    const trimmedBeforeCall = trimContext(messages);
+    const startedAt = Date.now();
+
+    let response: OpenAI.Chat.Completions.ChatCompletion;
+    try {
+      response = await client.chat.completions.create({
+        model,
+        messages,
+      });
+    } catch (error) {
+      logError("openai.request.failed", {
+        conversationId,
+        error: error instanceof Error ? error.message : error,
+      });
+      throw error;
+    }
+
+    const responseMessage = response.choices?.[0]?.message;
+    if (!responseMessage?.content) {
+      logError("openai.response.empty", {
+        conversationId,
+        usage: response.usage,
+      });
+      throw new Error("No content returned from OpenAI response");
+    }
+
+    messages.push(responseMessage);
+    const trimmedAfterCall = trimContext(messages);
+    const totalTokens = countTokens(messages);
+
+    const payload: Record<string, unknown> = {
+      conversationId,
+      totalTokens,
+      durationMs: Date.now() - startedAt,
+      usageTokens: response.usage?.total_tokens ?? null,
+      trimmed: trimmedBeforeCall || trimmedAfterCall,
+    };
+
+    logInfo("openai.tokens", payload);
+
+    return responseMessage.content;
+  };
+
+  const resetConversation = (conversationId: string) => {
+    conversations.set(conversationId, [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+    ]);
+  };
+
+  return {
+    generateReply,
+    resetConversation,
+  };
 }

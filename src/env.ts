@@ -43,6 +43,18 @@ const envSchema = z
       .string()
       .min(1, "OpenAI model is required")
       .default("gpt-4o-mini"),
+    OPENAI_MAX_CONTEXT_TOKENS: z
+      .string()
+      .default("700")
+      .transform((value) => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          throw new Error(
+            "OPENAI_MAX_CONTEXT_TOKENS must be a positive number"
+          );
+        }
+        return parsed;
+      }),
   })
   .refine(
     (data) =>
@@ -73,6 +85,10 @@ function validateEnvironment(): Environment {
   console.log(
     "TWILIO_MESSAGING_SERVICE_SID:",
     process.env.TWILIO_MESSAGING_SERVICE_SID
+  );
+  console.log(
+    "OPENAI_MAX_CONTEXT_TOKENS:",
+    process.env.OPENAI_MAX_CONTEXT_TOKENS ?? "[default 700]"
   );
 
   const result = envSchema.safeParse(process.env);

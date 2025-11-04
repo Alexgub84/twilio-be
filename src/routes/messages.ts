@@ -4,11 +4,11 @@ import {
   type MessagesHandlerDependencies,
 } from "../handlers/messages.js";
 
-export type MessagesRouteDependencies = Partial<MessagesHandlerDependencies>;
+export type MessagesRouteDependencies = MessagesHandlerDependencies;
 
 export async function messagesRoutes(
   app: FastifyInstance,
-  dependencies: MessagesRouteDependencies = {}
+  dependencies: MessagesRouteDependencies
 ) {
   const { handleHealthCheck, handleWhatsAppWebhook } =
     createMessagesHandlers(dependencies);
