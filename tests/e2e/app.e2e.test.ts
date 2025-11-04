@@ -1,8 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 
 describe("server e2e", () => {
   it("handles health check and WhatsApp flow end-to-end", async () => {
+    const chromaQueries: Array<{ queryTexts?: string[] }> = [];
+
+    vi.resetModules();
+    vi.doMock("../../src/clients/chromadb.fake.js", () => ({
+      createFakeChromaClient: () => ({
+        heartbeat: async () => Date.now(),
+        getOrCreateCollection: async () => ({
+          query: async (args: { queryTexts?: string[] }) => {
+            chromaQueries.push(args);
+            return {
+              documents: [["Hands and Fire workshop details"]],
+              metadatas: [[{ title: "workshops", source: "knowledge-base" }]],
+              distances: [[0.05]],
+            };
+          },
+        }),
+      }),
+    }));
+
     const { startServer } = await import("../../src/server.js");
 
     const app = await startServer({
@@ -36,8 +55,13 @@ describe("server e2e", () => {
         success: true,
         messageSid: expect.stringMatching(/^SMFAKE-/),
       });
+
+      expect(chromaQueries).toHaveLength(1);
+      expect(chromaQueries[0]?.queryTexts).toEqual(["Hello e2e"]);
     } finally {
       await app.close();
+      vi.unmock("../../src/clients/chromadb.fake.js");
+      vi.resetModules();
     }
   });
 });
