@@ -18,9 +18,10 @@ const context: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
 ];
 
 export async function generateSimpleResponse(message: string) {
+  context.push({ role: "user", content: message });
   const response = await openai.chat.completions.create({
     model: env.OPENAI_MODEL,
-    messages: [{ role: "user", content: message }],
+    messages: context,
   });
   const responseMessage = response.choices?.[0]?.message;
   if (!responseMessage) {
