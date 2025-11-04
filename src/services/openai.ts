@@ -9,6 +9,16 @@ import { logger } from "../logger.js";
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
+interface KnowledgeEntry {
+  title: string;
+  source?: string | null;
+}
+
+interface KnowledgeContext {
+  message: ChatMessage;
+  entries: KnowledgeEntry[];
+}
+
 export interface OpenAIServiceOptions {
   client: OpenAI;
   model: string;
@@ -164,10 +174,10 @@ export function createOpenAIService(
     return `${value.slice(0, sliceLimit)}...`;
   };
 
-  const buildKnowledgeMessage = async (
+  const buildKnowledgeContext = async (
     conversationId: string,
     userMessage: string
-  ): Promise<ChatMessage | null> => {
+  ): Promise<KnowledgeContext | null> => {
     const collection = await resolveChromaCollection();
 
     if (!collection) {
@@ -191,6 +201,8 @@ export function createOpenAIService(
         Math.floor(chromaMaxCharacters / Math.max(1, chromaMaxResults))
       );
 
+      const entriesForContext: KnowledgeEntry[] = [];
+
       documents.forEach((doc, index) => {
         if (!doc) {
           return;
@@ -207,6 +219,8 @@ export function createOpenAIService(
             ? metadata.source
             : "unknown";
         const distance = Array.isArray(distances) ? distances[index] : null;
+
+        entriesForContext.push({ title, source });
 
         const scoreFragment =
           typeof distance === "number"
@@ -238,9 +252,12 @@ export function createOpenAIService(
       });
 
       return {
-        role: "system",
-        content: contextString,
-      } satisfies ChatMessage;
+        entries: entriesForContext,
+        message: {
+          role: "system",
+          content: contextString,
+        },
+      } satisfies KnowledgeContext;
     } catch (error) {
       logWarn("chroma.query.failed", {
         conversationId,
@@ -261,19 +278,24 @@ export function createOpenAIService(
     const trimmedBeforeCall = trimContext(messages);
 
     const requestMessages = [...messages];
-    const knowledgeMessage = await buildKnowledgeMessage(
+    const knowledgeContext = await buildKnowledgeContext(
       conversationId,
       message
     );
+    const knowledgeEntries = knowledgeContext?.entries ?? [];
 
     let knowledgeApplied = false;
 
-    if (knowledgeMessage) {
-      requestMessages.splice(requestMessages.length - 1, 0, knowledgeMessage);
+    if (knowledgeContext) {
+      requestMessages.splice(
+        requestMessages.length - 1,
+        0,
+        knowledgeContext.message
+      );
       knowledgeApplied = true;
 
       if (countTokens(requestMessages) > tokenLimit) {
-        const index = requestMessages.indexOf(knowledgeMessage);
+        const index = requestMessages.indexOf(knowledgeContext.message);
         if (index >= 0) {
           requestMessages.splice(index, 1);
         }
@@ -311,7 +333,17 @@ export function createOpenAIService(
       throw new Error("No content returned from OpenAI response");
     }
 
-    messages.push(responseMessage);
+    const normalizedContent = normalizeAssistantReply(
+      responseMessage.content,
+      knowledgeEntries
+    );
+
+    const enrichedResponseMessage: ChatMessage = {
+      ...responseMessage,
+      content: normalizedContent,
+    };
+
+    messages.push(enrichedResponseMessage);
     const trimmedAfterCall = trimContext(messages);
     const totalTokens = countTokens(messages);
     const requestTokens = countTokens(requestMessages);
@@ -328,7 +360,7 @@ export function createOpenAIService(
 
     logInfo("openai.tokens", payload);
 
-    return responseMessage.content;
+    return normalizedContent;
   };
 
   const resetConversation = (conversationId: string) => {
@@ -344,4 +376,104 @@ export function createOpenAIService(
     generateReply,
     resetConversation,
   };
+}
+
+function normalizeAssistantReply(
+  content: string,
+  knowledgeEntries: KnowledgeEntry[]
+): string {
+  if (!content.includes("[") || !content.includes(")")) {
+    return content;
+  }
+
+  const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  if (!markdownLinkRegex.test(content)) {
+    return content;
+  }
+
+  const candidateUrls: string[] = knowledgeEntries
+    .map((entry) => entry.source)
+    .filter((source): source is string => typeof source === "string")
+    .map((source) => source.trim())
+    .filter(isHttpUrl);
+
+  let normalized = content;
+  let match: RegExpExecArray | null;
+  markdownLinkRegex.lastIndex = 0;
+
+  while ((match = markdownLinkRegex.exec(content)) !== null) {
+    const fullMatch = match[0] ?? "";
+    const label = match[1] ?? "";
+    const link = match[2] ?? "";
+
+    if (!fullMatch) {
+      continue;
+    }
+
+    const resolved = resolveUrl(link, candidateUrls);
+
+    const replacement = resolved ? formatLink(label, resolved) : label.trim();
+
+    normalized = normalized.replace(fullMatch, replacement);
+  }
+
+  return normalized;
+}
+
+function resolveUrl(link: string, candidates: string[]): string | null {
+  const trimmed = link.trim();
+
+  if (trimmed.length === 0 || trimmed === "#" || trimmed.startsWith("#")) {
+    return candidates.shift() ?? null;
+  }
+
+  if (isHttpUrl(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith("www.")) {
+    return `https://${trimmed}`;
+  }
+
+  const inlineUrl = extractFirstUrl(trimmed);
+  if (inlineUrl) {
+    return inlineUrl;
+  }
+
+  return null;
+}
+
+function formatLink(label: string, url: string): string {
+  const cleanedLabel = label
+    .trim()
+    .replace(/[\s\n]+/g, " ")
+    .trim();
+  if (cleanedLabel.length === 0) {
+    return url;
+  }
+
+  return `${cleanedLabel}\n${stripTrailingPunctuation(url)}`;
+}
+
+function stripTrailingPunctuation(value: string): string {
+  return value.replace(/[).,;:!?]+$/g, "");
+}
+
+function extractFirstUrl(value: string): string | null {
+  const urlRegex = /(https?:\/\/[^\s)]+|www\.[^\s)]+)/;
+  const match = value.match(urlRegex);
+  if (!match) {
+    return null;
+  }
+
+  const url = match[0];
+  if (url.startsWith("www.")) {
+    return `https://${url}`;
+  }
+
+  return url;
+}
+
+function isHttpUrl(value: string): boolean {
+  return value.startsWith("http://") || value.startsWith("https://");
 }

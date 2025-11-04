@@ -73,4 +73,57 @@ describe("createOpenAIService", () => {
     expect(queries).toHaveLength(1);
     expect(queries[0]?.queryTexts).toEqual(["Tell me about workshops"]);
   });
+
+  it("converts markdown links to plain URLs", async () => {
+    const service = createOpenAIService({
+      client: createFakeOpenAIClient(),
+      model: "gpt-4o-mini",
+      tokenLimit: 200,
+      systemPrompt: "Respond clearly",
+      tokenizer,
+      chromaClient: createFakeChromaClient(),
+      chromaCollection: "test-collection",
+    });
+
+    const response = await service.generateReply(
+      "conversation-links",
+      "הנה הקישור שביקשת: [Hands and Fire](https://handsandfire.com/workshops)"
+    );
+
+    expect(response).toContain(
+      "Hands and Fire\nhttps://handsandfire.com/workshops"
+    );
+    expect(response).not.toContain("](");
+  });
+
+  it("fills placeholder links using knowledge sources", async () => {
+    const service = createOpenAIService({
+      client: createFakeOpenAIClient(),
+      model: "gpt-4o-mini",
+      tokenLimit: 200,
+      systemPrompt: "Respond clearly",
+      tokenizer,
+      chromaClient: createFakeChromaClient({
+        documents: ["Hands and Fire workshop details"],
+        metadatas: [
+          {
+            title: "workshops",
+            source: "https://handsandfire.com/workshops",
+          },
+        ],
+        distances: [0.05],
+      }),
+      chromaCollection: "test-collection",
+    });
+
+    const response = await service.generateReply(
+      "conversation-placeholder",
+      "פרטי הסדנה כאן: [קישור לסדנאות](#)"
+    );
+
+    expect(response).toContain(
+      "קישור לסדנאות\nhttps://handsandfire.com/workshops"
+    );
+    expect(response).not.toContain("](#");
+  });
 });
