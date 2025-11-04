@@ -153,6 +153,13 @@ npm run start
 | `TWILIO_ACCOUNT_SID` | Twilio Account SID | Yes |
 | `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Yes |
 | `WA_PHONE_NUMBER` | WhatsApp phone number (E.164 format) | Yes |
+| `OPENAI_API_KEY` | OpenAI API key | Yes |
+| `OPENAI_MODEL` | OpenAI model identifier | Yes |
+| `OPENAI_MAX_CONTEXT_TOKENS` | Max tokens tracked per conversation | Yes |
+| `CHROMA_API_KEY` | Chroma Cloud API key | Yes |
+| `CHROMA_TENANT` | Chroma tenant identifier | Yes |
+| `CHROMA_DATABASE` | Chroma database name | Yes |
+| `CHROMA_COLLECTION` | Chroma collection name | Yes |
 
 ## Testing
 

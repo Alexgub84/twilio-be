@@ -55,6 +55,22 @@ const envSchema = z
         }
         return parsed;
       }),
+    CHROMA_API_KEY: z
+      .string()
+      .min(1, "Chroma API key is required")
+      .default(isTest ? "test_chroma_api_key" : ""),
+    CHROMA_TENANT: z
+      .string()
+      .min(1, "Chroma tenant is required")
+      .default(isTest ? "test_chroma_tenant" : ""),
+    CHROMA_DATABASE: z
+      .string()
+      .min(1, "Chroma database is required")
+      .default(isTest ? "test_chroma_database" : ""),
+    CHROMA_COLLECTION: z
+      .string()
+      .min(1, "Chroma collection is required")
+      .default(isTest ? "test_chroma_collection" : ""),
   })
   .refine(
     (data) =>
@@ -89,6 +105,16 @@ function validateEnvironment(): Environment {
   console.log(
     "OPENAI_MAX_CONTEXT_TOKENS:",
     process.env.OPENAI_MAX_CONTEXT_TOKENS ?? "[default 700]"
+  );
+  console.log(
+    "CHROMA_API_KEY:",
+    process.env.CHROMA_API_KEY ? "[SET]" : "[NOT SET]"
+  );
+  console.log("CHROMA_TENANT:", process.env.CHROMA_TENANT ?? "[not set]");
+  console.log("CHROMA_DATABASE:", process.env.CHROMA_DATABASE ?? "[not set]");
+  console.log(
+    "CHROMA_COLLECTION:",
+    process.env.CHROMA_COLLECTION ?? "[not set]"
   );
 
   const result = envSchema.safeParse(process.env);

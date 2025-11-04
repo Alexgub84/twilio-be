@@ -9,6 +9,8 @@ import { createFakeTwilioClient } from "./clients/twilio.fake.js";
 import { createOpenAIService } from "./services/openai.js";
 import { createTwilioService } from "./services/twilio.js";
 import { defaultSystemPrompt } from "./prompts/system.js";
+import { createChromaClient } from "./clients/chromadb.js";
+import { createFakeChromaClient } from "./clients/chromadb.fake.js";
 
 function shouldUseFakeClients() {
   if (typeof process.env.USE_FAKE_CLIENTS === "string") {
@@ -39,11 +41,21 @@ export async function startServer(
     ? createFakeTwilioClient()
     : createTwilioClient(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
 
+  const chromaClient = useFake
+    ? createFakeChromaClient()
+    : createChromaClient({
+        apiKey: env.CHROMA_API_KEY,
+        tenant: env.CHROMA_TENANT,
+        database: env.CHROMA_DATABASE,
+      });
+
   const openAIService = createOpenAIService({
     client: openAIClient,
     model: env.OPENAI_MODEL,
     tokenLimit: env.OPENAI_MAX_CONTEXT_TOKENS,
     systemPrompt: JSON.stringify(defaultSystemPrompt),
+    chromaClient,
+    chromaCollection: env.CHROMA_COLLECTION,
   });
 
   const twilioOptions: Parameters<typeof createTwilioService>[0] = {
