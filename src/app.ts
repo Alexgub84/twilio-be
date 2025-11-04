@@ -1,4 +1,8 @@
-import fastify from "fastify";
+import fastify, {
+  type FastifyInstance,
+  type FastifyServerOptions,
+  type RawServerDefault,
+} from "fastify";
 import formbody from "@fastify/formbody";
 import { registerRoutes } from "./routes/index.js";
 import type { OpenAIService } from "./services/openai.js";
@@ -12,19 +16,23 @@ export interface AppDependencies {
   messages?: Partial<MessagesHandlerDependencies>;
 }
 
+export type AppInstance = FastifyInstance<RawServerDefault>;
+
 export async function buildApp({
   openAIService,
   twilioService,
   messages,
-}: AppDependencies) {
-  const appLogger =
+}: AppDependencies): Promise<AppInstance> {
+  const loggerInstance =
     process.env.NODE_ENV === "test"
-      ? false
+      ? undefined
       : logger.child({ module: "fastify" });
 
-  const app = fastify({
-    logger: appLogger,
-  });
+  const appOptions: FastifyServerOptions<RawServerDefault> = loggerInstance
+    ? { loggerInstance }
+    : { logger: false };
+
+  const app = fastify(appOptions);
 
   await app.register(formbody);
 

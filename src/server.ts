@@ -1,5 +1,5 @@
-import type { FastifyInstance } from "fastify";
 import type { AddressInfo } from "node:net";
+import type { AppInstance } from "./app.js";
 import { buildApp } from "./app.js";
 import { env } from "./env.js";
 import { createOpenAIClient } from "./clients/openai.js";
@@ -26,7 +26,7 @@ export interface StartServerOptions {
 
 export async function startServer(
   options: StartServerOptions = {}
-): Promise<FastifyInstance> {
+): Promise<AppInstance> {
   const useFake = options.useFakeClients ?? shouldUseFakeClients();
   const host = options.host ?? "0.0.0.0";
   const port = options.port ?? env.PORT;

@@ -50,8 +50,7 @@ src/
 - Functions should be small, pure, testable
 - Use DI or mocks for API calls (Twilio client)
 - Test behavior, not implementation
-- When verifying changes locally, run `npm run lint` and `npm test`
-- The assistant should run `npm run lint` and `npm test` automatically after changes without asking for permission
+- The assistant should run `npm run build`,  `npm run lint` and `npm test` automatically after changes without asking for permission
 
 # REST API Design
 - Simple REST conventions: POST /messages/send, GET /messages/health
