@@ -1,5 +1,10 @@
 import OpenAI from "openai";
-import type { ChromaClient, Collection } from "chromadb";
+import {
+  registerEmbeddingFunction,
+  type ChromaClient,
+  type Collection,
+  type EmbeddingFunction as ChromaEmbeddingFunction,
+} from "chromadb";
 import {
   encoding_for_model,
   type Tiktoken,
@@ -10,6 +15,136 @@ import { logger } from "../logger.js";
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 type EmbeddingVector = number[];
+
+const isEmbeddingVector = (value: unknown): value is EmbeddingVector =>
+  Array.isArray(value) &&
+  value.length > 0 &&
+  value.every(
+    (element) => typeof element === "number" && Number.isFinite(element)
+  );
+
+interface OpenAIEmbeddingFunctionConfig {
+  model: string;
+}
+
+type EmbeddingFunctionClassLike = {
+  new (...args: unknown[]): ChromaEmbeddingFunction;
+  buildFromConfig: (
+    config: OpenAIEmbeddingFunctionConfig
+  ) => ChromaEmbeddingFunction;
+};
+
+interface OpenAIEmbeddingFunctionOptions {
+  openai_api_key: string;
+  model: string;
+  embedTexts?: (texts: string[]) => Promise<EmbeddingVector[]>;
+}
+
+class OpenAIEmbeddingFunction implements ChromaEmbeddingFunction {
+  private static readonly identifier = "openai-api";
+  private static registered = false;
+  private static register(): void {
+    if (OpenAIEmbeddingFunction.registered) {
+      return;
+    }
+
+    try {
+      registerEmbeddingFunction(
+        OpenAIEmbeddingFunction.identifier,
+        OpenAIEmbeddingFunction as unknown as EmbeddingFunctionClassLike
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.includes("already registered")
+      ) {
+        throw error;
+      }
+    }
+
+    OpenAIEmbeddingFunction.registered = true;
+  }
+
+  private static createEmbedder(
+    apiKey: string,
+    model: string
+  ): (texts: string[]) => Promise<EmbeddingVector[]> {
+    const embeddingClient = new OpenAI({ apiKey });
+    return async (texts: string[]): Promise<EmbeddingVector[]> => {
+      const response = await embeddingClient.embeddings.create({
+        model,
+        input: texts,
+      });
+
+      return response.data.map((item, index) => {
+        const embedding = item.embedding;
+        if (!isEmbeddingVector(embedding)) {
+          throw new Error(
+            `Invalid embedding vector received from OpenAI at index ${index}`
+          );
+        }
+        return embedding;
+      });
+    };
+  }
+
+  static buildFromConfig(
+    config: OpenAIEmbeddingFunctionConfig
+  ): ChromaEmbeddingFunction {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (typeof apiKey !== "string" || apiKey.length === 0) {
+      throw new Error(
+        "OPENAI_API_KEY environment variable is required for OpenAIEmbeddingFunction"
+      );
+    }
+
+    const model =
+      typeof config.model === "string" && config.model.length > 0
+        ? config.model
+        : "text-embedding-3-small";
+
+    return new OpenAIEmbeddingFunction({
+      openai_api_key: apiKey,
+      model,
+    });
+  }
+
+  public readonly name = OpenAIEmbeddingFunction.identifier;
+  private readonly model: string;
+  private readonly embedTexts: (texts: string[]) => Promise<EmbeddingVector[]>;
+
+  constructor(options: OpenAIEmbeddingFunctionOptions) {
+    OpenAIEmbeddingFunction.register();
+
+    this.model = options.model;
+    this.embedTexts =
+      options.embedTexts ??
+      OpenAIEmbeddingFunction.createEmbedder(
+        options.openai_api_key,
+        options.model
+      );
+  }
+
+  getConfig(): OpenAIEmbeddingFunctionConfig {
+    return { model: this.model };
+  }
+
+  defaultSpace(): "cosine" {
+    return "cosine";
+  }
+
+  supportedSpaces(): Array<"cosine" | "l2" | "ip"> {
+    return ["cosine", "l2", "ip"];
+  }
+
+  async generate(texts: string[]): Promise<EmbeddingVector[]> {
+    return this.embedTexts(texts);
+  }
+
+  async generateForQueries(texts: string[]): Promise<EmbeddingVector[]> {
+    return this.embedTexts(texts);
+  }
+}
 
 interface KnowledgeEntry {
   title: string;
@@ -27,6 +162,7 @@ export interface OpenAIServiceOptions {
   tokenLimit: number;
   systemPrompt: string;
   embeddingModel: string;
+  openAIApiKey: string;
   tokenizer?: Pick<Tiktoken, "encode">;
   chromaClient: ChromaClient;
   chromaCollection: string;
@@ -51,6 +187,7 @@ export function createOpenAIService(
     chromaClient,
     chromaCollection,
     embeddingModel,
+    openAIApiKey,
   } = options;
   const tokenizer =
     options.tokenizer ?? encoding_for_model(model as TiktokenModel);
@@ -73,13 +210,6 @@ export function createOpenAIService(
     serviceLogger.error(meta ?? {}, message);
   };
 
-  const isEmbeddingVector = (value: unknown): value is EmbeddingVector =>
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every(
-      (element) => typeof element === "number" && Number.isFinite(element)
-    );
-
   const embedTexts =
     options.embedTexts ??
     (async (texts: string[]): Promise<EmbeddingVector[]> => {
@@ -99,10 +229,19 @@ export function createOpenAIService(
       });
     });
 
+  const chromaEmbeddingFunction = new OpenAIEmbeddingFunction({
+    openai_api_key: openAIApiKey,
+    model: embeddingModel,
+    embedTexts,
+  });
+
   const resolveChromaCollection = async (): Promise<Collection | null> => {
     if (!chromaCollectionPromise) {
       chromaCollectionPromise = chromaClient
-        .getOrCreateCollection({ name: chromaCollection })
+        .getOrCreateCollection({
+          name: chromaCollection,
+          embeddingFunction: chromaEmbeddingFunction,
+        })
         .catch((error) => {
           chromaCollectionPromise = null;
           logError("chroma.collection.resolve.failed", {
@@ -236,7 +375,6 @@ export function createOpenAIService(
     try {
       const queryResult = await collection.query({
         queryEmbeddings,
-        queryTexts: [userMessage],
         nResults: chromaMaxResults,
         include: ["documents", "metadatas", "distances"],
       });

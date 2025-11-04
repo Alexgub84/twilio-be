@@ -25,6 +25,7 @@ describe("createOpenAIService", () => {
       systemPrompt: "You are helpful",
       embeddingModel: "text-embedding-3-small",
       tokenizer,
+      openAIApiKey: "test-key",
       chromaClient: createFakeChromaClient(),
       chromaCollection: "test-collection",
     });
@@ -43,6 +44,7 @@ describe("createOpenAIService", () => {
       systemPrompt: "You are helpful",
       embeddingModel: "text-embedding-3-small",
       tokenizer,
+      openAIApiKey: "test-key",
       chromaClient: createFakeChromaClient(),
       chromaCollection: "test-collection",
     });
@@ -71,6 +73,7 @@ describe("createOpenAIService", () => {
       systemPrompt: "You are helpful",
       embeddingModel: "text-embedding-3-small",
       tokenizer,
+      openAIApiKey: "test-key",
       chromaClient: createFakeChromaClient({
         documents: ["Hands and Fire workshop details"],
         metadatas: [{ title: "workshops", source: "knowledge-base" }],
@@ -85,7 +88,7 @@ describe("createOpenAIService", () => {
     await service.generateReply("conversation-ctx", "Tell me about workshops");
 
     expect(queries).toHaveLength(1);
-    expect(queries[0]?.queryTexts).toEqual(["Tell me about workshops"]);
+    expect(queries[0]?.queryTexts).toBeUndefined();
     expect(queries[0]?.queryEmbeddings?.[0]?.length).toBeGreaterThan(0);
   });
 
@@ -97,6 +100,7 @@ describe("createOpenAIService", () => {
       systemPrompt: "Respond clearly",
       embeddingModel: "text-embedding-3-small",
       tokenizer,
+      openAIApiKey: "test-key",
       chromaClient: createFakeChromaClient(),
       chromaCollection: "test-collection",
     });
@@ -120,6 +124,7 @@ describe("createOpenAIService", () => {
       systemPrompt: "Respond clearly",
       embeddingModel: "text-embedding-3-small",
       tokenizer,
+      openAIApiKey: "test-key",
       chromaClient: createFakeChromaClient({
         documents: ["Hands and Fire workshop details"],
         metadatas: [
@@ -170,6 +175,7 @@ describe("createOpenAIService", () => {
       systemPrompt: "You are helpful",
       embeddingModel: "text-embedding-3-small",
       tokenizer,
+      openAIApiKey: "test-key",
       chromaClient,
       chromaCollection: "test-collection",
     });
