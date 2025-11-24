@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ChromaClient } from "chromadb";
 import type { Tiktoken } from "tiktoken";
-import { createOpenAIService } from "../../src/services/openai.js";
+import { createOpenAIService } from "../../src/services/ai/openai.js";
 import { createFakeOpenAIClient } from "../../src/clients/openai.fake.js";
 import { createFakeChromaClient } from "../../src/clients/chromadb.fake.js";
 import { logger } from "../../src/logger.js";

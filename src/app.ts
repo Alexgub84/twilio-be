@@ -5,8 +5,8 @@ import fastify, {
 } from "fastify";
 import formbody from "@fastify/formbody";
 import { registerRoutes } from "./routes/index.js";
-import type { OpenAIService } from "./services/openai.js";
-import type { TwilioService } from "./services/twilio.js";
+import type { OpenAIService } from "./services/ai/openai.js";
+import type { TwilioService } from "./services/messaging/twilio.js";
 import type { MessagesHandlerDependencies } from "./handlers/messages.js";
 import { logger } from "./logger.js";
 
@@ -44,6 +44,28 @@ export async function buildApp({
     sendWhatsAppMessage:
       messages?.sendWhatsAppMessage ??
       ((to, body) => twilioService.sendWhatsAppMessage(to, body)),
+    saveConversationCsv:
+      messages?.saveConversationCsv ??
+      (async (conversationId, history) => {
+        const { saveConversationCsv } = await import(
+          "./services/export/conversationCsv.js"
+        );
+        return saveConversationCsv({
+          conversationId,
+          messages: history.map((m) => ({
+            role: m.role,
+            content:
+              typeof m.content === "string"
+                ? m.content
+                : JSON.stringify(m.content),
+            timestamp: new Date().toISOString(), // Approximate timestamp as history doesn't store it yet
+          })),
+        });
+      }),
+    getConversationHistory:
+      messages?.getConversationHistory ??
+      ((conversationId) =>
+        openAIService.getConversationHistory(conversationId)),
   };
 
   await app.register(async (instance) => {

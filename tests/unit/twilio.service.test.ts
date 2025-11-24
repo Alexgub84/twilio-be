@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createTwilioService } from "../../src/services/twilio.js";
+import { createTwilioService } from "../../src/services/messaging/twilio.js";
 import { createFakeTwilioClient } from "../../src/clients/twilio.fake.js";
 
 describe("createTwilioService", () => {

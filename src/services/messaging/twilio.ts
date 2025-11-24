@@ -1,6 +1,6 @@
 import type { Twilio } from "twilio";
-import type { SendMessageResult } from "../types/index.js";
-import { logger } from "../logger.js";
+import type { SendMessageResult } from "../../types/index.js";
+import { logger } from "../../logger.js";
 
 export interface TwilioServiceOptions {
   client: Twilio;

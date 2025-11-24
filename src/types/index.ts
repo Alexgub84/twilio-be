@@ -12,3 +12,9 @@ export interface SendMessageResult {
   messageSid?: string;
   error?: string;
 }
+
+export interface ConversationMessage {
+  role: string;
+  content: string;
+  timestamp: string;
+}
