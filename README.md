@@ -30,12 +30,34 @@ twilio-be/
 │   ├── env.ts                 # Zod-based environment validation
 │   ├── logger.ts              # Pino logger configuration
 │   ├── routes/                # Fastify route definitions
+│   │   ├── index.ts           # Route registration
+│   │   └── messages.ts        # Message routes
 │   ├── handlers/              # HTTP handlers with validation
-│   ├── services/              # Business logic (OpenAI, Twilio, CSV export)
+│   │   └── messages.ts        # Message handlers
+│   ├── services/              # Business logic
+│   │   ├── ai/                # AI-related services
+│   │   │   ├── conversationHistory.ts
+│   │   │   ├── knowledgeBase.ts
+│   │   │   └── openai.ts
+│   │   ├── export/            # Export services
+│   │   │   └── conversationCsv.ts
+│   │   └── messaging/         # Messaging services
+│   │       └── twilio.ts
 │   ├── clients/               # External SDK wrappers and fakes
+│   │   ├── chromadb.ts / chromadb.fake.ts
+│   │   ├── googleDrive.ts
+│   │   ├── openai.ts / openai.fake.ts
+│   │   └── twilio.ts / twilio.fake.ts
 │   ├── prompts/               # System prompt configuration
-│   └── types/                 # Shared types and schemas
+│   │   └── system.ts
+│   ├── types/                 # Shared types and schemas
+│   │   └── index.ts
+│   └── utils/                 # Utility functions
+│       └── contentNormalizer.ts
 ├── tests/                     # Vitest unit, integration, and e2e suites
+│   ├── unit/
+│   ├── integration/
+│   └── e2e/
 ├── env.example                # Sample configuration
 ├── package.json
 └── tsconfig.json
@@ -78,7 +100,7 @@ twilio-be/
 | `OPENAI_API_KEY` | OpenAI API key | Yes | `sk-...` |
 | `OPENAI_MODEL` | Chat completion model name | Yes | `gpt-4o-mini` |
 | `OPENAI_EMBEDDING_MODEL` | Embedding model for Chroma documents | Yes | `text-embedding-3-small` |
-| `OPENAI_MAX_CONTEXT_TOKENS` | Token budget for conversation context | Yes | `700` |
+| `OPENAI_MAX_CONTEXT_TOKENS` | Token budget for conversation context | No (defaults to `700`) | `700` |
 | `CHROMA_API_KEY` | Chroma API key | Yes | `ck-...` |
 | `CHROMA_TENANT` | Chroma tenant identifier | Yes | `my-tenant` |
 | `CHROMA_DATABASE` | Chroma database name | Yes | `knowledge-base` |
@@ -106,6 +128,17 @@ Response
 
 Accepts incoming WhatsApp messages from Twilio, generates an AI response, and sends it back through Twilio.
 
+**Standard Message Flow:**
+- Receives a WhatsApp message
+- Generates an AI response using OpenAI with Chroma knowledge retrieval
+- Sends the response back via Twilio
+- Maintains conversation history for context
+
+**Export Feature:**
+- Send the message `"export"` (case-insensitive) to trigger CSV export
+- Exports conversation history to Google Drive as a CSV file
+- Returns a confirmation message to the user
+
 Request
 ```json
 {
@@ -114,11 +147,18 @@ Request
 }
 ```
 
-Success Response
+Success Response (Standard Message)
 ```json
 {
   "success": true,
   "messageSid": "SMXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+}
+```
+
+Success Response (Export Triggered)
+```json
+{
+  "success": true
 }
 ```
 
@@ -129,6 +169,14 @@ Validation Error (400)
   "details": {
     "Body": ["Body field is required"]
   }
+}
+```
+
+Error Response (500)
+```json
+{
+  "error": "Failed to send message",
+  "details": "Error details here"
 }
 ```
 

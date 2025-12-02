@@ -5,7 +5,18 @@ import { buildApp } from "../../src/app.js";
 const createTestApp = async () => {
   const generateReply = vi.fn(
     async (_conversationId: string, message: string) => {
-      return `[ai] ${message}`;
+      return {
+        response: `[ai] ${message}`,
+        tokens: {
+          totalTokens: 100,
+          usageTokens: 50,
+          requestTokens: 30,
+          conversationTokens: 20,
+          knowledgeTokens: 0,
+          userTokens: 10,
+          durationMs: 500,
+        },
+      };
     }
   );
 
@@ -86,7 +97,18 @@ describe("app integration", () => {
   });
 
   it("returns 500 when Twilio send fails", async () => {
-    const generateReply = vi.fn(async () => "Hi!");
+    const generateReply = vi.fn(async () => ({
+      response: "Hi!",
+      tokens: {
+        totalTokens: 50,
+        usageTokens: 25,
+        requestTokens: 15,
+        conversationTokens: 10,
+        knowledgeTokens: 0,
+        userTokens: 5,
+        durationMs: 300,
+      },
+    }));
     const sendWhatsAppMessage = vi.fn(async () => ({
       success: false,
       error: "Twilio down",

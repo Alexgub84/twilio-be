@@ -30,10 +30,12 @@ describe("createOpenAIService", () => {
       chromaCollection: "test-collection",
     });
 
-    const response = await service.generateReply("conversation-1", "Hello");
+    const result = await service.generateReply("conversation-1", "Hello");
 
-    expect(response).toContain("[fake-openai]");
-    expect(response).toContain("Hello");
+    expect(result.response).toContain("[fake-openai]");
+    expect(result.response).toContain("Hello");
+    expect(result.tokens).toBeDefined();
+    expect(typeof result.tokens.totalTokens).toBe("number");
   });
 
   it("resets conversation context", async () => {
@@ -52,12 +54,12 @@ describe("createOpenAIService", () => {
     await service.generateReply("conversation-3", "Hi there");
     service.resetConversation("conversation-3");
 
-    const response = await service.generateReply(
+    const result = await service.generateReply(
       "conversation-3",
       "How are you?"
     );
 
-    expect(response).toContain("How are you?");
+    expect(result.response).toContain("How are you?");
   });
 
   it("queries chroma for contextual knowledge", async () => {
@@ -105,15 +107,15 @@ describe("createOpenAIService", () => {
       chromaCollection: "test-collection",
     });
 
-    const response = await service.generateReply(
+    const result = await service.generateReply(
       "conversation-links",
       "הנה הקישור שביקשת: [Hands and Fire](https://handsandfire.com/workshops)"
     );
 
-    expect(response).toContain(
+    expect(result.response).toContain(
       "Hands and Fire\nhttps://handsandfire.com/workshops"
     );
-    expect(response).not.toContain("](");
+    expect(result.response).not.toContain("](");
   });
 
   it("fills placeholder links using knowledge sources", async () => {
@@ -138,15 +140,15 @@ describe("createOpenAIService", () => {
       chromaCollection: "test-collection",
     });
 
-    const response = await service.generateReply(
+    const result = await service.generateReply(
       "conversation-placeholder",
       "פרטי הסדנה כאן: [קישור לסדנאות](#)"
     );
 
-    expect(response).toContain(
+    expect(result.response).toContain(
       "קישור לסדנאות\nhttps://handsandfire.com/workshops"
     );
-    expect(response).not.toContain("](#");
+    expect(result.response).not.toContain("](#");
   });
 
   it("logs chroma query failures as errors", async () => {
@@ -180,12 +182,12 @@ describe("createOpenAIService", () => {
       chromaCollection: "test-collection",
     });
 
-    const response = await service.generateReply(
+    const result = await service.generateReply(
       "conversation-error",
       "Hello there"
     );
 
-    expect(response).toContain("Hello there");
+    expect(result.response).toContain("Hello there");
     expect(fakeLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: "conversation-error",

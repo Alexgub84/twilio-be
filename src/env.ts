@@ -1,5 +1,6 @@
 import { z } from "zod";
 import dotenv from "dotenv";
+import { logger } from "./logger.js";
 
 dotenv.config();
 
@@ -109,63 +110,93 @@ const envSchema = z
 
 export type Environment = z.infer<typeof envSchema>;
 
+function logEnvironmentDebug(): void {
+  const envLogger = logger.child({ module: "env-validation" });
+  envLogger.debug({ NODE_ENV: process.env.NODE_ENV }, "env.NODE_ENV");
+  envLogger.debug({ PORT: process.env.PORT }, "env.PORT");
+  envLogger.debug(
+    {
+      accountSidPrefix: process.env.TWILIO_ACCOUNT_SID?.substring(0, 10),
+    },
+    "env.TWILIO_ACCOUNT_SID"
+  );
+  envLogger.debug(
+    { isSet: Boolean(process.env.TWILIO_AUTH_TOKEN) },
+    "env.TWILIO_AUTH_TOKEN"
+  );
+  envLogger.debug(
+    { phoneNumber: process.env.TWILIO_PHONE_NUMBER },
+    "env.TWILIO_PHONE_NUMBER"
+  );
+  envLogger.debug(
+    { messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID },
+    "env.TWILIO_MESSAGING_SERVICE_SID"
+  );
+  envLogger.debug(
+    {
+      maxContextTokens:
+        process.env.OPENAI_MAX_CONTEXT_TOKENS ?? "[default 700]",
+    },
+    "env.OPENAI_MAX_CONTEXT_TOKENS"
+  );
+  envLogger.debug(
+    {
+      embeddingModel:
+        process.env.OPENAI_EMBEDDING_MODEL ??
+        "[default text-embedding-3-small]",
+    },
+    "env.OPENAI_EMBEDDING_MODEL"
+  );
+  envLogger.debug(
+    { isSet: Boolean(process.env.CHROMA_API_KEY) },
+    "env.CHROMA_API_KEY"
+  );
+  envLogger.debug(
+    { tenant: process.env.CHROMA_TENANT ?? "[not set]" },
+    "env.CHROMA_TENANT"
+  );
+  envLogger.debug(
+    { database: process.env.CHROMA_DATABASE ?? "[not set]" },
+    "env.CHROMA_DATABASE"
+  );
+  envLogger.debug(
+    { collection: process.env.CHROMA_COLLECTION ?? "[not set]" },
+    "env.CHROMA_COLLECTION"
+  );
+  envLogger.debug(
+    {
+      serviceAccountEmail:
+        process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ?? "[not set]",
+    },
+    "env.GOOGLE_SERVICE_ACCOUNT_EMAIL"
+  );
+  envLogger.debug(
+    {
+      isPrivateKeySet: Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY),
+    },
+    "env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
+  );
+  envLogger.debug(
+    { folderId: process.env.GOOGLE_DRIVE_FOLDER_ID ?? "[not set]" },
+    "env.GOOGLE_DRIVE_FOLDER_ID"
+  );
+}
+
 function validateEnvironment(): Environment {
-  console.log("🔍 Environment Variables Debug:");
-  console.log("NODE_ENV:", process.env.NODE_ENV);
-  console.log("PORT:", process.env.PORT);
-  console.log(
-    "TWILIO_ACCOUNT_SID:",
-    process.env.TWILIO_ACCOUNT_SID?.substring(0, 10) + "..."
-  );
-  console.log(
-    "TWILIO_AUTH_TOKEN:",
-    process.env.TWILIO_AUTH_TOKEN ? "[SET]" : "[NOT SET]"
-  );
-  console.log("TWILIO_PHONE_NUMBER:", process.env.TWILIO_PHONE_NUMBER);
-  console.log(
-    "TWILIO_MESSAGING_SERVICE_SID:",
-    process.env.TWILIO_MESSAGING_SERVICE_SID
-  );
-  console.log(
-    "OPENAI_MAX_CONTEXT_TOKENS:",
-    process.env.OPENAI_MAX_CONTEXT_TOKENS ?? "[default 700]"
-  );
-  console.log(
-    "OPENAI_EMBEDDING_MODEL:",
-    process.env.OPENAI_EMBEDDING_MODEL ?? "[default text-embedding-3-small]"
-  );
-  console.log(
-    "CHROMA_API_KEY:",
-    process.env.CHROMA_API_KEY ? "[SET]" : "[NOT SET]"
-  );
-  console.log("CHROMA_TENANT:", process.env.CHROMA_TENANT ?? "[not set]");
-  console.log("CHROMA_DATABASE:", process.env.CHROMA_DATABASE ?? "[not set]");
-  console.log(
-    "CHROMA_COLLECTION:",
-    process.env.CHROMA_COLLECTION ?? "[not set]"
-  );
-  console.log(
-    "GOOGLE_SERVICE_ACCOUNT_EMAIL:",
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ?? "[not set]"
-  );
-  console.log(
-    "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY:",
-    process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ? "[SET]" : "[NOT SET]"
-  );
-  console.log(
-    "GOOGLE_DRIVE_FOLDER_ID:",
-    process.env.GOOGLE_DRIVE_FOLDER_ID ?? "[not set]"
-  );
+  logEnvironmentDebug();
 
   const result = envSchema.safeParse(process.env);
 
   if (!result.success) {
-    console.error("❌ Invalid environment variables:");
-    console.error(JSON.stringify(result.error.flatten().fieldErrors, null, 2));
+    const envLogger = logger.child({ module: "env-validation" });
+    envLogger.error(
+      { errors: result.error.flatten().fieldErrors },
+      "env.validation.failed"
+    );
     throw new Error("Environment validation failed");
   }
 
-  console.log("✅ Environment validation passed");
+  logger.child({ module: "env-validation" }).info("env.validation.passed");
   return result.data;
 }
 

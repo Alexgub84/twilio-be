@@ -10,6 +10,8 @@ import {
   createKnowledgeBaseService,
   type KnowledgeBaseService,
   type EmbeddingVector,
+  type KnowledgeContext,
+  type KnowledgeEntry,
 } from "./knowledgeBase.js";
 import { normalizeAssistantReply } from "../../utils/contentNormalizer.js";
 
@@ -32,8 +34,24 @@ export interface OpenAIServiceOptions {
   knowledgeBaseService?: KnowledgeBaseService;
 }
 
+export interface GenerateReplyResult {
+  response: string;
+  tokens: {
+    totalTokens: number;
+    usageTokens: number | null;
+    requestTokens: number;
+    conversationTokens: number;
+    knowledgeTokens: number;
+    userTokens: number;
+    durationMs: number;
+  };
+}
+
 export interface OpenAIService {
-  generateReply: (conversationId: string, message: string) => Promise<string>;
+  generateReply: (
+    conversationId: string,
+    message: string
+  ) => Promise<GenerateReplyResult>;
   resetConversation: (conversationId: string) => void;
   getConversationHistory: (conversationId: string) => ChatMessage[];
 }
@@ -92,52 +110,58 @@ export function createOpenAIService(
     serviceLogger.warn(meta ?? {}, message);
   };
 
-  const generateReply = async (
+  function addUserMessage(
     conversationId: string,
     message: string
-  ): Promise<string> => {
+  ): ChatMessage[] {
     const messages = conversationHistory.getMessages(conversationId);
     const userMessage: ChatMessage = { role: "user", content: message };
     conversationHistory.addMessage(conversationId, userMessage);
+    return messages;
+  }
 
-    const trimmedBeforeCall = conversationHistory.trimContext(messages);
+  function applyKnowledgeContext(
+    requestMessages: ChatMessage[],
+    knowledgeContext: KnowledgeContext | null
+  ): { messages: ChatMessage[]; applied: boolean } {
+    if (!knowledgeContext) {
+      return { messages: requestMessages, applied: false };
+    }
 
-    const requestMessages = [...messages];
-    const knowledgeContext = await knowledgeBase.buildKnowledgeContext(
-      conversationId,
-      message
+    const messagesWithKnowledge = [...requestMessages];
+    messagesWithKnowledge.splice(
+      messagesWithKnowledge.length - 1,
+      0,
+      knowledgeContext.message
     );
-    const knowledgeEntries = knowledgeContext?.entries ?? [];
 
-    let knowledgeApplied = false;
+    const exceedsTokenLimit =
+      conversationHistory.countTokens(messagesWithKnowledge) > tokenLimit;
 
-    if (knowledgeContext) {
-      requestMessages.splice(
-        requestMessages.length - 1,
-        0,
-        knowledgeContext.message
-      );
-      knowledgeApplied = true;
-
-      if (conversationHistory.countTokens(requestMessages) > tokenLimit) {
-        const index = requestMessages.indexOf(knowledgeContext.message);
-        if (index >= 0) {
-          requestMessages.splice(index, 1);
-        }
-        knowledgeApplied = false;
-        logWarn("chroma.context.dropped", {
-          conversationId,
-          reason: "token_limit",
-        });
+    if (exceedsTokenLimit) {
+      const index = messagesWithKnowledge.indexOf(knowledgeContext.message);
+      if (index >= 0) {
+        messagesWithKnowledge.splice(index, 1);
       }
+      logWarn("chroma.context.dropped", {
+        reason: "token_limit",
+      });
+      return { messages: messagesWithKnowledge, applied: false };
     }
 
-    const trimmedRequest = conversationHistory.trimContext(requestMessages);
+    return { messages: messagesWithKnowledge, applied: true };
+  }
 
-    if (knowledgeApplied && knowledgeContext) {
-      knowledgeApplied = requestMessages.includes(knowledgeContext.message);
-    }
-
+  function calculateTokenBreakdown(
+    requestMessages: ChatMessage[],
+    knowledgeApplied: boolean,
+    knowledgeContext: KnowledgeContext | null
+  ): {
+    totalRequestTokens: number;
+    knowledgeTokens: number;
+    userTokens: number;
+    conversationTokens: number;
+  } {
     const totalRequestTokens = conversationHistory.countTokens(requestMessages);
     const knowledgeTokens =
       knowledgeApplied && knowledgeContext
@@ -154,19 +178,20 @@ export function createOpenAIService(
       totalRequestTokens - knowledgeTokens - userTokens
     );
 
-    logInfo("openai.tokens.breakdown", {
-      conversationId,
-      requestTokens: totalRequestTokens,
-      conversationTokens,
+    return {
+      totalRequestTokens,
       knowledgeTokens,
       userTokens,
-      tokenLimit,
-    });
-    const startedAt = Date.now();
+      conversationTokens,
+    };
+  }
 
-    let response: OpenAI.Chat.Completions.ChatCompletion;
+  async function callOpenAI(
+    requestMessages: ChatMessage[],
+    conversationId: string
+  ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
     try {
-      response = await client.chat.completions.create({
+      return await client.chat.completions.create({
         model,
         messages: requestMessages,
       });
@@ -177,7 +202,12 @@ export function createOpenAIService(
       });
       throw error;
     }
+  }
 
+  function extractResponseMessage(
+    response: OpenAI.Chat.Completions.ChatCompletion,
+    conversationId: string
+  ): OpenAI.Chat.Completions.ChatCompletionMessage {
     const responseMessage = response.choices?.[0]?.message;
     if (!responseMessage?.content) {
       logError("openai.response.empty", {
@@ -186,18 +216,74 @@ export function createOpenAIService(
       });
       throw new Error("No content returned from OpenAI response");
     }
+    return responseMessage;
+  }
 
+  function saveAssistantResponse(
+    conversationId: string,
+    responseMessage: OpenAI.Chat.Completions.ChatCompletionMessage,
+    knowledgeEntries: KnowledgeEntry[]
+  ): void {
+    if (!responseMessage.content) {
+      throw new Error("Response message content is null");
+    }
     const normalizedContent = normalizeAssistantReply(
       responseMessage.content,
       knowledgeEntries
     );
-
     const enrichedResponseMessage: ChatMessage = {
       ...responseMessage,
       content: normalizedContent,
     };
-
     conversationHistory.addMessage(conversationId, enrichedResponseMessage);
+  }
+
+  const generateReply = async (
+    conversationId: string,
+    message: string
+  ): Promise<GenerateReplyResult> => {
+    const messages = addUserMessage(conversationId, message);
+    const trimmedBeforeCall = conversationHistory.trimContext(messages);
+
+    const requestMessages = [...messages];
+    const knowledgeContext = await knowledgeBase.buildKnowledgeContext(
+      conversationId,
+      message
+    );
+    const knowledgeEntries = knowledgeContext?.entries ?? [];
+
+    const { messages: finalRequestMessages, applied: knowledgeApplied } =
+      applyKnowledgeContext(requestMessages, knowledgeContext);
+
+    const trimmedRequest =
+      conversationHistory.trimContext(finalRequestMessages);
+
+    const verifiedKnowledgeApplied = Boolean(
+      knowledgeApplied &&
+        knowledgeContext &&
+        finalRequestMessages.includes(knowledgeContext.message)
+    );
+
+    const tokenBreakdown = calculateTokenBreakdown(
+      finalRequestMessages,
+      verifiedKnowledgeApplied,
+      knowledgeContext
+    );
+
+    logInfo("openai.tokens.breakdown", {
+      conversationId,
+      requestTokens: tokenBreakdown.totalRequestTokens,
+      conversationTokens: tokenBreakdown.conversationTokens,
+      knowledgeTokens: tokenBreakdown.knowledgeTokens,
+      userTokens: tokenBreakdown.userTokens,
+      tokenLimit,
+    });
+
+    const startedAt = Date.now();
+    const response = await callOpenAI(finalRequestMessages, conversationId);
+    const responseMessage = extractResponseMessage(response, conversationId);
+
+    saveAssistantResponse(conversationId, responseMessage, knowledgeEntries);
     const trimmedAfterCall = conversationHistory.trimContext(messages);
 
     const payload: Record<string, unknown> = {
@@ -206,16 +292,36 @@ export function createOpenAIService(
       durationMs: Date.now() - startedAt,
       usageTokens: response.usage?.total_tokens ?? null,
       trimmed: trimmedBeforeCall || trimmedAfterCall || trimmedRequest,
-      knowledgeApplied,
-      requestTokens: totalRequestTokens,
-      conversationTokens,
-      knowledgeTokens,
-      userTokens,
+      knowledgeApplied: verifiedKnowledgeApplied,
+      requestTokens: tokenBreakdown.totalRequestTokens,
+      conversationTokens: tokenBreakdown.conversationTokens,
+      knowledgeTokens: tokenBreakdown.knowledgeTokens,
+      userTokens: tokenBreakdown.userTokens,
     };
 
     logInfo("openai.tokens", payload);
 
-    return normalizedContent;
+    if (!responseMessage.content) {
+      throw new Error("Response message content is null");
+    }
+
+    const normalizedResponse = normalizeAssistantReply(
+      responseMessage.content,
+      knowledgeEntries
+    );
+
+    return {
+      response: normalizedResponse,
+      tokens: {
+        totalTokens: conversationHistory.countTokens(messages),
+        usageTokens: response.usage?.total_tokens ?? null,
+        requestTokens: tokenBreakdown.totalRequestTokens,
+        conversationTokens: tokenBreakdown.conversationTokens,
+        knowledgeTokens: tokenBreakdown.knowledgeTokens,
+        userTokens: tokenBreakdown.userTokens,
+        durationMs: Date.now() - startedAt,
+      },
+    };
   };
 
   const resetConversation = (conversationId: string) => {
